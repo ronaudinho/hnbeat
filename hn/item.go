@@ -32,7 +32,8 @@ type Item struct {
 	Score       int64    `json:"score,omitempty"`       // The story's score, or the votes for a pollopt.
 	Title       string   `json:"title,omitempty"`       // The title of the story, poll or job. HTML.
 	Parts       []int64  `json:"parts,omitempty"`       // A list of related pollopts, in display order.
-	Descendants string   `json:"descendants,omitempty"` // In the case of stories or polls, the total comment count.
+	Descendants int64    `json:"descendants,omitempty"` // In the case of stories or polls, the total comment count.
 }
 
+// MaxItem is the current largest item ID.
 type MaxItem int64

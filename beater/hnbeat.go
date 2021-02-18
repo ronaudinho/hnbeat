@@ -1,6 +1,7 @@
 package beater
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"strings"
@@ -48,13 +49,12 @@ func (bt *hnbeat) Run(b *beat.Beat) error {
 	}
 
 	ticker := time.NewTicker(bt.config.Period)
-	counter := 1
 	for {
 		select {
 		case <-bt.done:
 			return nil
 		case <-ticker.C:
-			wordMap, err := bt.countWords()
+			_, wordFreq, err := bt.countWords()
 			if err != nil {
 				logp.Err(err.Error())
 				continue
@@ -63,13 +63,13 @@ func (bt *hnbeat) Run(b *beat.Beat) error {
 			event := beat.Event{
 				Timestamp: time.Now(),
 				Fields: common.MapStr{
-					"type":  b.Info.Name,
-					"words": wordMap,
+					"type": b.Info.Name,
+					// "words":  wordCloud,
+					"sorted": wordFreq,
 				},
 			}
 			bt.client.Publish(event)
 			logp.Info("Event sent")
-			counter++
 		}
 	}
 }
@@ -81,15 +81,19 @@ func (bt *hnbeat) Stop() {
 }
 
 // countWords counts words that appear since last max item.
-func (bt *hnbeat) countWords() (map[string]int, error) {
-	wordMap := make(map[string]int)
+func (bt *hnbeat) countWords() (map[string]int, map[int][]string, error) {
+	wordCloud := make(map[string]int)
 	x, err := bt.hnClient.GetMaxItem()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
 	if bt.hnClient.MaxItem == 0 {
-		bt.hnClient.MaxItem = x - 100
+		bt.hnClient.MaxItem = x - int64(bt.config.ItemCount)
+	} else if bt.hnClient.MaxItem == x {
+		return nil, nil, errors.New("no new item")
 	}
+
 	var words []string
 	for bt.hnClient.MaxItem < x {
 		i, err := bt.hnClient.GetItem(x)
@@ -97,8 +101,8 @@ func (bt *hnbeat) countWords() (map[string]int, error) {
 			logp.Err(err.Error())
 			continue
 		}
+		r := strings.NewReplacer(".", " ", ",", " ", ";", " ", ":", " ", "!", " ", "?", " ", "-", " ", "_", " ")
 		if i.Text != "" {
-			r := strings.NewReplacer(".", " ", ",", " ", ";", " ", "!", " ", "?", " ", "-", " ", "_", " ")
 			words = append(words, strings.Fields(
 				r.Replace(
 					strings.ToLower(
@@ -108,7 +112,6 @@ func (bt *hnbeat) countWords() (map[string]int, error) {
 			)...)
 		}
 		if i.Title != "" {
-			r := strings.NewReplacer(".", " ", ",", " ", ";", " ", "!", " ", "?", " ", "-", " ", "_", " ")
 			words = append(words, strings.Fields(r.Replace(strings.ToLower(html.UnescapeString(i.Title))))...)
 		}
 		x--
@@ -116,12 +119,18 @@ func (bt *hnbeat) countWords() (map[string]int, error) {
 
 	bt.hnClient.MaxItem = x
 	for _, word := range words {
-		_, ok := wordMap[word]
+		_, ok := wordCloud[word]
 		if ok {
-			wordMap[word]++
+			wordCloud[word]++
 		} else {
-			wordMap[word] = 1
+			wordCloud[word] = 1
 		}
 	}
-	return wordMap, nil
+
+	wordFreq := make(map[int][]string)
+	for k, v := range wordCloud {
+		wordFreq[v] = append(wordFreq[v], k)
+	}
+
+	return wordCloud, wordFreq, nil
 }
